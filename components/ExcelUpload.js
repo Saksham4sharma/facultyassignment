@@ -437,18 +437,16 @@ const ExcelUpload = ({ onDataParsed }) => {
     try {
       console.log('Merging:', { timetable, seatingPlan });
 
-      // Create merged subjects
-      const subjects = timetable.subjects.map(subject => {
-        // Try to match subject code with seating plan data
-        // Subject code from timetable might be "FT-101" and from seating might be "IB-2K25"
-        // We need to find a match based on the code pattern
-        
+      // First, group all rooms by date with their total student counts
+      const dateRoomMap = {}; // { date: { roomNumber: totalStudents } }
+
+      // Collect all subjects and their rooms per date
+      timetable.subjects.forEach(subject => {
         let matchingKey = null;
         const subjectCodeParts = subject.code.split('-');
         
         // Look for matching allocation in seating plan
         for (const key of Object.keys(seatingPlan.subjectAllocations)) {
-          // Check if codes match or if they share common parts
           if (key === subject.code || 
               key.includes(subject.code) || 
               subject.code.includes(key) ||
@@ -459,32 +457,139 @@ const ExcelUpload = ({ onDataParsed }) => {
         }
 
         const allocations = matchingKey ? seatingPlan.subjectAllocations[matchingKey] : {};
+        const roomData = allocations['default'] || {};
         
-        // Create schedule for each date from timetable
+        // For each date this subject is scheduled
+        subject.dates.forEach(date => {
+          if (!dateRoomMap[date]) {
+            dateRoomMap[date] = {};
+          }
+          
+          // Add room data for this subject
+          Object.keys(roomData).forEach(roomNumber => {
+            const studentCount = parseInt(roomData[roomNumber]) || 0;
+            if (!dateRoomMap[date][roomNumber]) {
+              dateRoomMap[date][roomNumber] = 0;
+            }
+            // Sum up students in the same room (in case multiple subjects use same room)
+            dateRoomMap[date][roomNumber] += studentCount;
+          });
+        });
+      });
+
+      console.log('Date-Room Map:', dateRoomMap);
+
+      // Now assign faculties to each unique room per date
+      const roomFacultyAssignments = {}; // { date: { roomNumber: [faculties] } }
+
+      Object.keys(dateRoomMap).forEach(date => {
+        roomFacultyAssignments[date] = {};
+        
+        // Get available faculties for this date
+        const availableFacultiesForDate = Object.values(invigilationData.facultyAvailability).filter(faculty => 
+          faculty.availableDates.includes(date)
+        );
+        
+        const inhouseCount = parseInt(inhouseFacultyCount) || 0;
+        const inhouseFaculties = availableFacultiesForDate.filter(f => f.sNo <= inhouseCount);
+        const outsourcedFaculties = availableFacultiesForDate.filter(f => f.sNo > inhouseCount);
+        
+        const roomNumbers = Object.keys(dateRoomMap[date]);
+        
+        console.log(`Date ${date}: ${roomNumbers.length} rooms, ${inhouseFaculties.length} inhouse, ${outsourcedFaculties.length} outsourced`);
+        
+        // PHASE 1: Assign ONE inhouse faculty to EACH room first
+        let inhouseIndex = 0;
+        roomNumbers.forEach(roomNumber => {
+          roomFacultyAssignments[date][roomNumber] = [];
+          
+          if (inhouseIndex < inhouseFaculties.length) {
+            const faculty = inhouseFaculties[inhouseIndex];
+            roomFacultyAssignments[date][roomNumber].push({
+              name: faculty.name,
+              post: faculty.post,
+              type: 'Inhouse'
+            });
+            inhouseIndex++;
+            console.log(`Room ${roomNumber}: Assigned inhouse faculty ${faculty.name}`);
+          } else {
+            console.warn(`WARNING: Room ${roomNumber} on ${date} - No inhouse faculty available!`);
+          }
+        });
+        
+        // PHASE 2: Assign additional faculties to rooms that need them (31+ students)
+        let outsourcedIndex = 0;
+        roomNumbers.forEach(roomNumber => {
+          const totalStudents = dateRoomMap[date][roomNumber];
+          let additionalNeeded = 0;
+          
+          if (totalStudents >= 31 && totalStudents <= 50) {
+            additionalNeeded = 1; // Need 2 total, already have 1
+          } else if (totalStudents > 50) {
+            additionalNeeded = 2; // Need 3 total, already have 1
+          }
+          
+          // First try to use remaining inhouse faculties
+          while (additionalNeeded > 0 && inhouseIndex < inhouseFaculties.length) {
+            const faculty = inhouseFaculties[inhouseIndex];
+            roomFacultyAssignments[date][roomNumber].push({
+              name: faculty.name,
+              post: faculty.post,
+              type: 'Inhouse'
+            });
+            inhouseIndex++;
+            additionalNeeded--;
+          }
+          
+          // Then use outsourced faculties
+          while (additionalNeeded > 0 && outsourcedIndex < outsourcedFaculties.length) {
+            const faculty = outsourcedFaculties[outsourcedIndex];
+            roomFacultyAssignments[date][roomNumber].push({
+              name: faculty.name,
+              post: faculty.post,
+              type: 'Outsourced'
+            });
+            outsourcedIndex++;
+            additionalNeeded--;
+          }
+          
+          console.log(`Room ${roomNumber} (${totalStudents} students): Assigned ${roomFacultyAssignments[date][roomNumber].length} faculties`);
+        });
+      });
+
+      console.log('Room Faculty Assignments:', roomFacultyAssignments);
+
+      // Now rebuild subjects with faculty assignments
+      const subjects = timetable.subjects.map(subject => {
+        let matchingKey = null;
+        const subjectCodeParts = subject.code.split('-');
+        
+        for (const key of Object.keys(seatingPlan.subjectAllocations)) {
+          if (key === subject.code || 
+              key.includes(subject.code) || 
+              subject.code.includes(key) ||
+              (subjectCodeParts.length > 0 && key.startsWith(subjectCodeParts[0]))) {
+            matchingKey = key;
+            break;
+          }
+        }
+
+        const allocations = matchingKey ? seatingPlan.subjectAllocations[matchingKey] : {};
+        const roomData = allocations['default'] || {};
+        
         const schedule = subject.dates.map(date => {
-          console.log(`Processing date: ${date} for subject: ${subject.code}`);
-          
-          // Get room data (currently stored under 'default' key in seating plan)
-          const roomData = allocations['default'] || {};
-          
           const rooms = Object.keys(roomData).map(roomNumber => {
             const studentCount = parseInt(roomData[roomNumber]) || 0;
             
-            console.log(`Room ${roomNumber}: ${studentCount} students on ${date}`);
-            
-            // Assign faculties based on student count and availability
-            let assignedFaculties = [];
-            if (invigilationData && invigilationData.facultyAvailability) {
-              const inhouseCount = parseInt(inhouseFacultyCount) || 0;
-              assignedFaculties = assignFaculties(date, studentCount, invigilationData.facultyAvailability, inhouseCount);
-            } else {
-              console.log('No invigilation data available');
-            }
+            // Get the pre-assigned faculties for this room on this date
+            const faculties = roomFacultyAssignments[date] && roomFacultyAssignments[date][roomNumber] 
+              ? roomFacultyAssignments[date][roomNumber] 
+              : [];
             
             return {
               number: roomNumber,
               studentCount: studentCount,
-              faculties: assignedFaculties
+              faculties: faculties
             };
           });
 
@@ -540,8 +645,16 @@ const ExcelUpload = ({ onDataParsed }) => {
             facultiesAssigned: 0,
             inhouseAssigned: 0,
             outsourcedAssigned: 0,
-            roomsWithoutInhouse: 0
+            roomsWithoutInhouse: 0,
+            availableFaculties: 0
           };
+          
+          // Count faculties available on this specific date
+          if (invigilationData && invigilationData.facultyAvailability) {
+            dateWiseStats[date].availableFaculties = Object.values(invigilationData.facultyAvailability)
+              .filter(faculty => faculty.availableDates.includes(date))
+              .length;
+          }
         }
 
         slot.rooms.forEach(room => {
@@ -578,7 +691,7 @@ const ExcelUpload = ({ onDataParsed }) => {
       });
     });
 
-    // Count total available faculties
+    // Count total available faculties (total in system, not date-specific)
     const totalAvailableFaculties = invigilationData ? 
       Object.keys(invigilationData.facultyAvailability).length : 0;
 
@@ -622,6 +735,8 @@ const ExcelUpload = ({ onDataParsed }) => {
     const inhouseFaculties = availableFaculties.filter(f => f.sNo <= inhouseCount);
     const outsourcedFaculties = availableFaculties.filter(f => f.sNo > inhouseCount);
 
+    console.log(`Inhouse count parameter: ${inhouseCount}`);
+    console.log(`Faculty sNo values:`, availableFaculties.map(f => `${f.name}: sNo=${f.sNo}`));
     console.log(`Inhouse: ${inhouseFaculties.length}, Outsourced: ${outsourcedFaculties.length}`);
 
     const assigned = [];
@@ -894,7 +1009,7 @@ const ExcelUpload = ({ onDataParsed }) => {
                   rooms: allocationStats.dateWiseStats[selectedStatsDate]?.roomsCount || 0,
                   needed: allocationStats.dateWiseStats[selectedStatsDate]?.facultiesNeeded || 0,
                   assigned: allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0,
-                  available: allocationStats.totalAvailableFaculties,
+                  available: allocationStats.dateWiseStats[selectedStatsDate]?.availableFaculties || 0,
                   shortage: Math.max(0, (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesNeeded || 0) - (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0)),
                   excess: Math.max(0, (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0) - (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesNeeded || 0)),
                   roomsWithoutInhouse: allocationStats.dateWiseStats[selectedStatsDate]?.roomsWithoutInhouse || 0

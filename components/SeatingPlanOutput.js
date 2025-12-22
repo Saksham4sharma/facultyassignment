@@ -447,35 +447,59 @@ const SeatingPlanOutput = ({ data }) => {
             </thead>
             <tbody>
               {dates.map(date => {
-                const dateRows = [];
+                // Group rooms by room number
+                const roomsMap = {};
                 data.schedule[date].forEach(subject => {
                   subject.rooms.forEach(room => {
-                    if (room.faculties && room.faculties.length > 0) {
-                      dateRows.push(
-                        <tr key={`${date}-${room.roomNumber}-${subject.subjectCode}`}>
-                          <td>{date}</td>
-                          <td>{room.roomNumber}</td>
-                          <td>
-                            <div className="subject-info">
-                              <div className="subject-code">{subject.subjectCode}</div>
-                              <div className="subject-name">{subject.subjectName}</div>
-                            </div>
-                          </td>
-                          <td>{room.studentCount}</td>
-                          <td>
-                            <div className="faculty-assignment-list">
-                              {room.faculties.map((faculty, idx) => (
-                                <div key={idx} className={`assigned-faculty ${faculty.type === 'Inhouse' ? 'faculty-inhouse' : 'faculty-outsourced'}`}>
-                                  {faculty.name} ({faculty.post})
-                                  <span className="faculty-badge">{faculty.type}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      );
+                    if (!roomsMap[room.roomNumber]) {
+                      roomsMap[room.roomNumber] = {
+                        roomNumber: room.roomNumber,
+                        subjects: [],
+                        totalStudents: 0,
+                        faculties: room.faculties || []
+                      };
                     }
+                    roomsMap[room.roomNumber].subjects.push({
+                      code: subject.subjectCode,
+                      name: subject.subjectName,
+                      students: room.studentCount
+                    });
+                    roomsMap[room.roomNumber].totalStudents += parseInt(room.studentCount) || 0;
                   });
+                });
+
+                const dateRows = [];
+                Object.values(roomsMap).forEach(roomData => {
+                  if (roomData.faculties && roomData.faculties.length > 0) {
+                    dateRows.push(
+                      <tr key={`${date}-${roomData.roomNumber}`}>
+                        <td>{date}</td>
+                        <td>{roomData.roomNumber}</td>
+                        <td>
+                          <div className="subject-info">
+                            {roomData.subjects.map((subj, idx) => (
+                              <div key={idx} style={{ marginBottom: '5px' }}>
+                                <div className="subject-code">{subj.code}</div>
+                                <div className="subject-name">{subj.name}</div>
+                                <div style={{ fontSize: '11px', color: '#999' }}>({subj.students} students)</div>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                        <td><strong>{roomData.totalStudents}</strong></td>
+                        <td>
+                          <div className="faculty-assignment-list">
+                            {roomData.faculties.map((faculty, idx) => (
+                              <div key={idx} className={`assigned-faculty ${faculty.type === 'Inhouse' ? 'faculty-inhouse' : 'faculty-outsourced'}`}>
+                                {faculty.name} ({faculty.post})
+                                <span className="faculty-badge">{faculty.type}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
                 });
                 return dateRows;
               })}
