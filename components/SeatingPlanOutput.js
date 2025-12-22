@@ -260,7 +260,15 @@ const SeatingPlanOutput = ({ data }) => {
         });
       });
     });
-    return Array.from(roomsSet).sort();
+    // Natural sort for mixed alphanumeric room numbers
+    return Array.from(roomsSet).sort((a, b) => {
+      const aNum = parseInt(a.match(/\d+/));
+      const bNum = parseInt(b.match(/\d+/));
+      if (!isNaN(aNum) && !isNaN(bNum) && aNum !== bNum) {
+        return aNum - bNum;
+      }
+      return a.localeCompare(b);
+    });
   };
 
   const allRooms = getAllRooms();
@@ -449,7 +457,9 @@ const SeatingPlanOutput = ({ data }) => {
               {dates.map(date => {
                 // Group rooms by room number
                 const roomsMap = {};
+                console.log(`Processing date ${date}:`, data.schedule[date]);
                 data.schedule[date].forEach(subject => {
+                  console.log(`  Subject: ${subject.subjectCode}, Rooms:`, subject.rooms);
                   subject.rooms.forEach(room => {
                     if (!roomsMap[room.roomNumber]) {
                       roomsMap[room.roomNumber] = {
@@ -458,6 +468,12 @@ const SeatingPlanOutput = ({ data }) => {
                         totalStudents: 0,
                         faculties: room.faculties || []
                       };
+                    } else {
+                      // If room already exists, preserve existing faculties (they should be the same)
+                      // Only update if current room has faculties and existing doesn't
+                      if (room.faculties && room.faculties.length > 0 && roomsMap[room.roomNumber].faculties.length === 0) {
+                        roomsMap[room.roomNumber].faculties = room.faculties;
+                      }
                     }
                     roomsMap[room.roomNumber].subjects.push({
                       code: subject.subjectCode,
@@ -467,10 +483,13 @@ const SeatingPlanOutput = ({ data }) => {
                     roomsMap[room.roomNumber].totalStudents += parseInt(room.studentCount) || 0;
                   });
                 });
+                console.log(`  Final roomsMap for ${date}:`, roomsMap);
 
                 const dateRows = [];
                 Object.values(roomsMap).forEach(roomData => {
-                  if (roomData.faculties && roomData.faculties.length > 0) {
+                  // Show all rooms, even if no faculty assigned (for debugging)
+                  const hasFaculties = roomData.faculties && roomData.faculties.length > 0;
+                  if (true) { // Changed from: if (roomData.faculties && roomData.faculties.length > 0) {
                     dateRows.push(
                       <tr key={`${date}-${roomData.roomNumber}`}>
                         <td>{date}</td>
@@ -488,14 +507,18 @@ const SeatingPlanOutput = ({ data }) => {
                         </td>
                         <td><strong>{roomData.totalStudents}</strong></td>
                         <td>
-                          <div className="faculty-assignment-list">
-                            {roomData.faculties.map((faculty, idx) => (
-                              <div key={idx} className={`assigned-faculty ${faculty.type === 'Inhouse' ? 'faculty-inhouse' : 'faculty-outsourced'}`}>
-                                {faculty.name} ({faculty.post})
-                                <span className="faculty-badge">{faculty.type}</span>
-                              </div>
-                            ))}
-                          </div>
+                          {hasFaculties ? (
+                            <div className="faculty-assignment-list">
+                              {roomData.faculties.map((faculty, idx) => (
+                                <div key={idx} className={`assigned-faculty ${faculty.type === 'Inhouse' ? 'faculty-inhouse' : 'faculty-outsourced'}`}>
+                                  {faculty.name} ({faculty.post})
+                                  <span className="faculty-badge">{faculty.type}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ color: '#999', fontStyle: 'italic' }}>No faculty assigned</div>
+                          )}
                         </td>
                       </tr>
                     );

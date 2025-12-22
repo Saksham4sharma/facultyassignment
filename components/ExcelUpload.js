@@ -109,7 +109,7 @@ const ExcelUpload = ({ onDataParsed }) => {
         const row = data[rowIndex];
         if (!row || !row[dateColumnIndex]) continue;
 
-        const dateCell = String(row[dateColumnIndex]).trim();
+        let dateCell = String(row[dateColumnIndex]).trim();
         
         // Skip empty dates or special entries like "BREAK", "SUNDAY"
         if (!dateCell || 
@@ -117,6 +117,31 @@ const ExcelUpload = ({ onDataParsed }) => {
             dateCell.toLowerCase().includes('sunday')) {
           continue;
         }
+
+        // Handle Excel date formats
+        // Excel might return dates as numbers (serial dates) or formatted strings
+        if (!isNaN(dateCell) && dateCell.length > 4) {
+          // It's a number (Excel serial date) - convert it
+          const excelDate = parseFloat(dateCell);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          const day = String(jsDate.getDate()).padStart(2, '0');
+          const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+          const year = jsDate.getFullYear();
+          dateCell = `${day}-${month}-${year}`;
+        } else if (dateCell.includes('/')) {
+          // Handle formats like "25/11/2025" or "25/11/25"
+          const parts = dateCell.split('/');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const month = parts[1].padStart(2, '0');
+            let year = parts[2];
+            if (year.length === 2) year = '20' + year;
+            dateCell = `${day}-${month}-${year}`;
+          }
+        }
+        // If already in DD-MM-YYYY format, keep it as is
+        
+        console.log(`Parsed date: ${dateCell} from row ${rowIndex}`);
 
         // Process all columns after the date column (they contain subjects)
         for (let colIndex = dateColumnIndex + 1; colIndex < row.length; colIndex++) {
@@ -182,9 +207,12 @@ const ExcelUpload = ({ onDataParsed }) => {
       // Convert map to array
       const subjects = Array.from(subjectsMap.values());
 
+      console.log('All parsed subjects with dates:', subjects.map(s => ({ code: s.code, dates: s.dates })));
+
       // Calculate date range from parsed dates
       if (subjects.length > 0) {
         const allDates = subjects.flatMap(s => s.dates);
+        console.log('All unique dates found:', [...new Set(allDates)].sort());
         if (allDates.length > 0) {
           // Sort dates
           const sortedDates = allDates.sort();
@@ -279,14 +307,23 @@ const ExcelUpload = ({ onDataParsed }) => {
         if (rollMatch) {
           subjectCode = `${rollMatch[1]}-${rollMatch[2]}`;
         } else {
-          // Fallback: just take the first part before hyphen
-          const parts = fromRoll.split('-');
-          if (parts.length > 0) {
-            subjectCode = parts[0];
+          // Fallback: try to extract just the prefix (IB, IC, IT, etc.)
+          const prefixMatch = fromRoll.match(/^([A-Z]{2,3})/i);
+          if (prefixMatch) {
+            subjectCode = prefixMatch[1];
+          } else {
+            // Last resort: take first part before hyphen
+            const parts = fromRoll.split('-');
+            if (parts.length > 0 && parts[0]) {
+              subjectCode = parts[0];
+            }
           }
         }
 
-        if (!subjectCode) continue;
+        if (!subjectCode) {
+          console.warn(`Could not extract subject code from roll number: ${fromRoll}`);
+          continue;
+        }
 
         // For now, we'll use a generic date key since the seating plan doesn't have dates
         // The dates will come from the timetable file
@@ -337,14 +374,15 @@ const ExcelUpload = ({ onDataParsed }) => {
 
         for (let j = 0; j < row.length; j++) {
           const cell = String(row[j]).toLowerCase().trim();
-          if (cell.includes('s.') && cell.includes('no')) {
+          if ((cell.includes('s.') && cell.includes('no')) || cell === 's.no.' || cell === 's.no' || cell === 'sno' || cell === 's no') {
             sNoColIndex = j;
+            console.log(`Found S.No. column at index ${j}: "${row[j]}"`);
           }
           if (cell.includes('name') && cell.includes('faculty')) {
             nameColIndex = j;
             headerRowIndex = i;
           }
-          if (cell === 'post') {
+          if (cell === 'post' || cell === 'designation') {
             postColIndex = j;
           }
         }
@@ -371,6 +409,11 @@ const ExcelUpload = ({ onDataParsed }) => {
       console.log('Name column index:', nameColIndex);
       console.log('Post column index:', postColIndex);
       console.log('Date columns found:', dateColumns);
+      
+      if (sNoColIndex === -1) {
+        console.warn('WARNING: S.No. column not detected! All faculties will be numbered sequentially.');
+        console.log('First few rows for debugging:', data.slice(0, Math.min(5, data.length)));
+      }
 
       if (headerRowIndex === -1 || nameColIndex === -1) {
         console.error('Could not find header row in invigilation sheet');
@@ -387,7 +430,17 @@ const ExcelUpload = ({ onDataParsed }) => {
 
         const facultyName = String(row[nameColIndex]).trim();
         const post = postColIndex !== -1 ? String(row[postColIndex]).trim() : '';
-        const sNo = sNoColIndex !== -1 ? parseInt(row[sNoColIndex]) || rowIndex - dataStartRow + 1 : rowIndex - dataStartRow + 1;
+        
+        // Parse S.No. more robustly
+        let sNo;
+        if (sNoColIndex !== -1 && row[sNoColIndex]) {
+          // Try to extract number from the cell (handles "1", "1.", "1.0", etc.)
+          const sNoValue = String(row[sNoColIndex]).trim();
+          const numMatch = sNoValue.match(/\d+/);
+          sNo = numMatch ? parseInt(numMatch[0]) : rowIndex - dataStartRow + 1;
+        } else {
+          sNo = rowIndex - dataStartRow + 1;
+        }
 
         if (!facultyName) continue;
 
@@ -398,10 +451,12 @@ const ExcelUpload = ({ onDataParsed }) => {
           continue;
         }
 
+        console.log(`Parsed faculty: ${facultyName}, S.No: ${sNo} (type: ${typeof sNo}), Post: ${post}`);
+
         facultyAvailability[facultyName] = {
           name: facultyName,
           post: post,
-          sNo: sNo,
+          sNo: parseInt(sNo), // Ensure it's always stored as integer
           isInhouse: false, // Will be set based on inhouseFacultyCount
           availableDates: []
         };
@@ -409,8 +464,8 @@ const ExcelUpload = ({ onDataParsed }) => {
         // Check availability for each date
         dateColumns.forEach(dateCol => {
           const cellValue = String(row[dateCol.index] || '').trim().toLowerCase();
-          // If cell contains 'v' or '√', faculty is available
-          if (cellValue === 'v' || cellValue === '√' || cellValue === 'y' || cellValue === '√') {
+          // If cell contains 'v' or '√' or 'y' or '✓', faculty is available
+          if (cellValue === 'v' || cellValue === '√' || cellValue === 'y' || cellValue === '✓' || cellValue.includes('✓')) {
             // Convert date format from "25.11" to "DD-MM-2025"
             const [day, month] = dateCol.date.split('.');
             const formattedDate = `${day.padStart(2, '0')}-${month.padStart(2, '0')}-2025`;
@@ -443,21 +498,40 @@ const ExcelUpload = ({ onDataParsed }) => {
       // Collect all subjects and their rooms per date
       timetable.subjects.forEach(subject => {
         let matchingKey = null;
-        const subjectCodeParts = subject.code.split('-');
+        // Extract prefix (first 2-3 letters) for matching
+        const subjectPrefix = subject.code.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+        
+        console.log(`Looking for match for subject: ${subject.code} (prefix: ${subjectPrefix})`);
         
         // Look for matching allocation in seating plan
         for (const key of Object.keys(seatingPlan.subjectAllocations)) {
-          if (key === subject.code || 
-              key.includes(subject.code) || 
-              subject.code.includes(key) ||
-              (subjectCodeParts.length > 0 && key.startsWith(subjectCodeParts[0]))) {
+          const keyPrefix = key.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+          
+          console.log(`  Checking seating plan key: ${key} (prefix: ${keyPrefix})`);
+          
+          // Match by prefix (e.g., "FT" matches "FT")
+          if (subjectPrefix && keyPrefix && subjectPrefix === keyPrefix) {
             matchingKey = key;
+            console.log(`  ✓ MATCHED by prefix: ${subject.code} → ${key}`);
+            break;
+          }
+          
+          // Fallback: exact match or contains
+          if (key === subject.code || key.includes(subject.code) || subject.code.includes(key)) {
+            matchingKey = key;
+            console.log(`  ✓ MATCHED by exact/contains: ${subject.code} → ${key}`);
             break;
           }
         }
 
         const allocations = matchingKey ? seatingPlan.subjectAllocations[matchingKey] : {};
         const roomData = allocations['default'] || {};
+        
+        if (!matchingKey) {
+          console.warn(`No seating plan match found for subject: ${subject.code} (${subject.name})`);
+        } else {
+          console.log(`Matched subject ${subject.code} with seating plan key: ${matchingKey}`);
+        }
         
         // For each date this subject is scheduled
         subject.dates.forEach(date => {
@@ -491,43 +565,77 @@ const ExcelUpload = ({ onDataParsed }) => {
         );
         
         const inhouseCount = parseInt(inhouseFacultyCount) || 0;
-        const inhouseFaculties = availableFacultiesForDate.filter(f => f.sNo <= inhouseCount);
-        const outsourcedFaculties = availableFacultiesForDate.filter(f => f.sNo > inhouseCount);
+        
+        // Ensure all sNo values are integers for proper comparison
+        const inhouseFaculties = availableFacultiesForDate.filter(f => {
+          const sNo = parseInt(f.sNo);
+          return !isNaN(sNo) && sNo <= inhouseCount;
+        });
+        const outsourcedFaculties = availableFacultiesForDate.filter(f => {
+          const sNo = parseInt(f.sNo);
+          return isNaN(sNo) || sNo > inhouseCount;
+        });
         
         const roomNumbers = Object.keys(dateRoomMap[date]);
         
-        console.log(`Date ${date}: ${roomNumbers.length} rooms, ${inhouseFaculties.length} inhouse, ${outsourcedFaculties.length} outsourced`);
+        console.log(`\n=== FACULTY ASSIGNMENT FOR ${date} ===`);
+        console.log(`Inhouse count setting: ${inhouseCount} (type: ${typeof inhouseCount})`);
+        console.log(`Total rooms: ${roomNumbers.length}`);
+        console.log(`Available faculties for date (${availableFacultiesForDate.length}):`);
+        availableFacultiesForDate.forEach(f => {
+          console.log(`  - ${f.name}: S.No=${f.sNo} (type: ${typeof f.sNo}), isInhouse: ${f.sNo <= inhouseCount}`);
+        });
+        console.log(`Inhouse faculties (${inhouseFaculties.length}):`, inhouseFaculties.map(f => `${f.name} (S.No: ${f.sNo})`));
+        console.log(`Outsourced faculties (${outsourcedFaculties.length}):`, outsourcedFaculties.map(f => `${f.name} (S.No: ${f.sNo})`));
         
-        // PHASE 1: Assign ONE inhouse faculty to EACH room first
+        // PHASE 1: Assign ONE faculty to EACH room first (prefer inhouse, use outsourced if needed)
         let inhouseIndex = 0;
+        let outsourcedIndex = 0;
+        
         roomNumbers.forEach(roomNumber => {
           roomFacultyAssignments[date][roomNumber] = [];
           
           if (inhouseIndex < inhouseFaculties.length) {
+            // Assign inhouse faculty
             const faculty = inhouseFaculties[inhouseIndex];
+            console.log(`  → Room ${roomNumber}: Assigning INHOUSE faculty ${faculty.name} (S.No: ${faculty.sNo})`);
             roomFacultyAssignments[date][roomNumber].push({
               name: faculty.name,
               post: faculty.post,
               type: 'Inhouse'
             });
             inhouseIndex++;
-            console.log(`Room ${roomNumber}: Assigned inhouse faculty ${faculty.name}`);
+          } else if (outsourcedIndex < outsourcedFaculties.length) {
+            // No inhouse available, assign outsourced faculty
+            const faculty = outsourcedFaculties[outsourcedIndex];
+            console.log(`  → Room ${roomNumber}: Assigning OUTSOURCED faculty ${faculty.name} (S.No: ${faculty.sNo}) - no inhouse available`);
+            roomFacultyAssignments[date][roomNumber].push({
+              name: faculty.name,
+              post: faculty.post,
+              type: 'Outsourced'
+            });
+            outsourcedIndex++;
           } else {
-            console.warn(`WARNING: Room ${roomNumber} on ${date} - No inhouse faculty available!`);
+            console.error(`ERROR: Room ${roomNumber} on ${date} - No faculties available at all!`);
           }
         });
         
         // PHASE 2: Assign additional faculties to rooms that need them (31+ students)
-        let outsourcedIndex = 0;
         roomNumbers.forEach(roomNumber => {
           const totalStudents = dateRoomMap[date][roomNumber];
+          const currentFaculties = roomFacultyAssignments[date][roomNumber].length;
           let additionalNeeded = 0;
           
+          // Calculate total needed based on student count
+          let totalNeeded = 1;
           if (totalStudents >= 31 && totalStudents <= 50) {
-            additionalNeeded = 1; // Need 2 total, already have 1
+            totalNeeded = 2;
           } else if (totalStudents > 50) {
-            additionalNeeded = 2; // Need 3 total, already have 1
+            totalNeeded = 3;
           }
+          
+          // Additional needed = total needed - already assigned
+          additionalNeeded = totalNeeded - currentFaculties;
           
           // First try to use remaining inhouse faculties
           while (additionalNeeded > 0 && inhouseIndex < inhouseFaculties.length) {
@@ -562,13 +670,20 @@ const ExcelUpload = ({ onDataParsed }) => {
       // Now rebuild subjects with faculty assignments
       const subjects = timetable.subjects.map(subject => {
         let matchingKey = null;
-        const subjectCodeParts = subject.code.split('-');
+        // Extract prefix (first 2-3 letters) for matching
+        const subjectPrefix = subject.code.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
         
         for (const key of Object.keys(seatingPlan.subjectAllocations)) {
-          if (key === subject.code || 
-              key.includes(subject.code) || 
-              subject.code.includes(key) ||
-              (subjectCodeParts.length > 0 && key.startsWith(subjectCodeParts[0]))) {
+          const keyPrefix = key.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+          
+          // Match by prefix (e.g., "FT" matches "FT")
+          if (subjectPrefix && keyPrefix && subjectPrefix === keyPrefix) {
+            matchingKey = key;
+            break;
+          }
+          
+          // Fallback: exact match or contains
+          if (key === subject.code || key.includes(subject.code) || subject.code.includes(key)) {
             matchingKey = key;
             break;
           }
@@ -577,14 +692,23 @@ const ExcelUpload = ({ onDataParsed }) => {
         const allocations = matchingKey ? seatingPlan.subjectAllocations[matchingKey] : {};
         const roomData = allocations['default'] || {};
         
+        if (!matchingKey && Object.keys(roomData).length === 0) {
+          console.warn(`No rooms found for subject: ${subject.code} (${subject.name})`);
+        }
+        
         const schedule = subject.dates.map(date => {
           const rooms = Object.keys(roomData).map(roomNumber => {
             const studentCount = parseInt(roomData[roomNumber]) || 0;
             
             // Get the pre-assigned faculties for this room on this date
+            // Create a copy to avoid shared references across subjects
             const faculties = roomFacultyAssignments[date] && roomFacultyAssignments[date][roomNumber] 
-              ? roomFacultyAssignments[date][roomNumber] 
+              ? [...roomFacultyAssignments[date][roomNumber]] 
               : [];
+            
+            if (faculties.length === 0 && studentCount > 0) {
+              console.warn(`No faculties assigned to room ${roomNumber} on ${date} (${studentCount} students)`);
+            }
             
             return {
               number: roomNumber,
@@ -696,7 +820,7 @@ const ExcelUpload = ({ onDataParsed }) => {
       Object.keys(invigilationData.facultyAvailability).length : 0;
 
     const shortage = totalFacultiesNeeded - totalFacultiesAssigned;
-    const excess = totalFacultiesAssigned - totalFacultiesNeeded;
+    const excess = totalAvailableFaculties - totalFacultiesAssigned;
 
     return {
       totalRooms,
@@ -1011,7 +1135,7 @@ const ExcelUpload = ({ onDataParsed }) => {
                   assigned: allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0,
                   available: allocationStats.dateWiseStats[selectedStatsDate]?.availableFaculties || 0,
                   shortage: Math.max(0, (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesNeeded || 0) - (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0)),
-                  excess: Math.max(0, (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0) - (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesNeeded || 0)),
+                  excess: Math.max(0, (allocationStats.dateWiseStats[selectedStatsDate]?.availableFaculties || 0) - (allocationStats.dateWiseStats[selectedStatsDate]?.facultiesAssigned || 0)),
                   roomsWithoutInhouse: allocationStats.dateWiseStats[selectedStatsDate]?.roomsWithoutInhouse || 0
                 };
 
