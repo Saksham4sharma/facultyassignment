@@ -461,11 +461,16 @@ const SeatingPlanOutput = ({ data }) => {
                 data.schedule[date].forEach(subject => {
                   console.log(`  Subject: ${subject.subjectCode}, Rooms:`, subject.rooms);
                   subject.rooms.forEach(room => {
+                    // Debug: Log what values we're receiving
+                    if (room.roomNumber === 'LT-2' || room.roomNumber === 'LH-3') {
+                      console.log(`  >>> Display receiving: Subject ${subject.subjectCode}, Room ${room.roomNumber}, studentCount=${room.studentCount}, aggregatedStudentCount=${room.aggregatedStudentCount}, faculties=${room.faculties ? room.faculties.length : 0}`);
+                    }
+                    
                     if (!roomsMap[room.roomNumber]) {
                       roomsMap[room.roomNumber] = {
                         roomNumber: room.roomNumber,
                         subjects: [],
-                        totalStudents: 0,
+                        totalStudents: room.aggregatedStudentCount || room.studentCount || 0, // Use aggregated total
                         faculties: room.faculties || []
                       };
                     } else {
@@ -474,19 +479,25 @@ const SeatingPlanOutput = ({ data }) => {
                       if (room.faculties && room.faculties.length > 0 && roomsMap[room.roomNumber].faculties.length === 0) {
                         roomsMap[room.roomNumber].faculties = room.faculties;
                       }
+                      // Update totalStudents to the aggregated count (should be same for all subjects sharing the room)
+                      if (room.aggregatedStudentCount) {
+                        roomsMap[room.roomNumber].totalStudents = room.aggregatedStudentCount;
+                      }
                     }
                     roomsMap[room.roomNumber].subjects.push({
                       code: subject.subjectCode,
                       name: subject.subjectName,
                       students: room.studentCount
                     });
-                    roomsMap[room.roomNumber].totalStudents += parseInt(room.studentCount) || 0;
                   });
                 });
                 console.log(`  Final roomsMap for ${date}:`, roomsMap);
 
                 const dateRows = [];
                 Object.values(roomsMap).forEach(roomData => {
+                  // Log the actual student count being displayed
+                  console.log(`Display: Room ${roomData.roomNumber} on ${date} - Total Students: ${roomData.totalStudents}, Faculty Count: ${roomData.faculties.length}`);
+                  
                   // Show all rooms, even if no faculty assigned (for debugging)
                   const hasFaculties = roomData.faculties && roomData.faculties.length > 0;
                   if (true) { // Changed from: if (roomData.faculties && roomData.faculties.length > 0) {

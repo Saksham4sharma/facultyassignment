@@ -37,6 +37,7 @@ export default function Home() {
           rooms: rooms.map(room => ({
             roomNumber: room.number,
             studentCount: room.studentCount,
+            aggregatedStudentCount: room.aggregatedStudentCount, // Preserve the aggregated count used for faculty assignment
             faculties: room.faculties || []
           }))
         });

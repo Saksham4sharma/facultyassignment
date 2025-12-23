@@ -1017,3 +1017,265 @@ body {
     font-size: 1.5rem;
   }
 }
+
+/* Course Code Mapping Section */
+.mapping-section {
+  background: #fff9e6 !important;
+  border: 2px solid #ffd700 !important;
+}
+
+/* Unmatched Subjects Warning */
+.unmatched-warning {
+  background: #fff3cd;
+  border: 2px solid #ffc107;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.warning-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+  color: #856404;
+  font-size: 16px;
+}
+
+.warning-icon {
+  font-size: 24px;
+}
+
+.unmatched-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.unmatched-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: white;
+  padding: 15px;
+  border-radius: 6px;
+  border-left: 4px solid #ff9800;
+  gap: 15px;
+}
+
+.unmatched-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+
+.unmatched-code {
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  font-size: 16px;
+  color: #d84315;
+}
+
+.unmatched-name {
+  color: #555;
+  font-size: 14px;
+}
+
+.unmatched-dates {
+  color: #777;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.btn-quick-add {
+  padding: 8px 16px;
+  background: #ff9800;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: all 0.3s ease;
+}
+
+.btn-quick-add:hover {
+  background: #f57c00;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(255, 152, 0, 0.3);
+}
+
+.all-matched-message {
+  background: #d4edda;
+  border: 2px solid #28a745;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 20px;
+  color: #155724;
+  font-size: 15px;
+  text-align: center;
+}
+
+.mapping-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  text-align: left;
+}
+
+.mapping-inputs {
+  display: flex;
+  align-items: flex-end;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.mapping-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.mapping-input-group label {
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 14px;
+}
+
+.mapping-input {
+  padding: 10px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.mapping-input:focus {
+  outline: none;
+  border-color: #3498db;
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.mapping-arrow {
+  font-size: 24px;
+  font-weight: bold;
+  color: #3498db;
+  padding-bottom: 5px;
+}
+
+.btn-add-mapping {
+  padding: 10px 20px;
+  background: #27ae60;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.btn-add-mapping:hover:not(:disabled) {
+  background: #229954;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(39, 174, 96, 0.3);
+}
+
+.btn-add-mapping:disabled {
+  background: #95a5a6;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.mappings-list {
+  margin-top: 10px;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+}
+
+.mappings-list h4 {
+  margin-bottom: 10px;
+  color: #2c3e50;
+  font-size: 14px;
+}
+
+.mapping-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  border-left: 3px solid #3498db;
+}
+
+.mapping-text {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.btn-remove-mapping {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+
+.btn-remove-mapping:hover {
+  background: #c0392b;
+  transform: scale(1.1);
+}
+
+.mapping-hint {
+  padding: 12px;
+  background: #e8f5e9;
+  border-left: 4px solid #4caf50;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #2c5f2d;
+}
+
+.mapping-hint strong {
+  color: #1b5e20;
+}
+
+@media (max-width: 768px) {
+  .mapping-inputs {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mapping-input-group {
+    min-width: 100%;
+  }
+
+  .mapping-arrow {
+    transform: rotate(90deg);
+    text-align: center;
+  }
+
+  .btn-add-mapping {
+    width: 100%;
+  }
+
+  .unmatched-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .btn-quick-add {
+    width: 100%;
+  }
+}

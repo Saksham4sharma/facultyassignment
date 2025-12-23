@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 
 const ExcelUpload = ({ onDataParsed }) => {
@@ -13,6 +13,10 @@ const ExcelUpload = ({ onDataParsed }) => {
   const [error, setError] = useState('');
   const [allocationStats, setAllocationStats] = useState(null);
   const [selectedStatsDate, setSelectedStatsDate] = useState('all');
+  
+  // Course code mappings
+  const [courseMappings, setCourseMappings] = useState([]);
+  const [unmatchedSubjects, setUnmatchedSubjects] = useState([]);
 
   const handleFileUpload = async (e, fileType) => {
     const file = e.target.files[0];
@@ -150,6 +154,8 @@ const ExcelUpload = ({ onDataParsed }) => {
 
           const subjectText = String(subjectCell).trim();
           
+          console.log(`Row ${rowIndex}, Col ${colIndex}: "${subjectText}"`);
+          
           // Skip if it's just "Subject" header or empty
           if (subjectText.toLowerCase() === 'subject') continue;
 
@@ -158,32 +164,43 @@ const ExcelUpload = ({ onDataParsed }) => {
           // "MBA (MS) 2Y FT-101 Principles & Practices of Management"
           // "M.Tech (CS) CS-102 Physics-I"
           // "B.Com IB-101N Financial Accounting-I"
+          // "MCA 5Y 101A Mathematics-I" (code starts with number)
           
           let subjectCode = '';
           let subjectName = '';
           let programName = '';
 
-          // Try to extract pattern: "PROGRAM CODE Subject Name"
-          // Look for code patterns like FT-101, CS-102, IB-101N, etc.
-          const match = subjectText.match(/^(.*?)\s+([A-Z]{1,3}-?\d{3,4}[A-Z]*)\s+(.+)$/i);
+          // Try pattern 1: "PROGRAM CODE Subject Name" where code has letters first
+          // Matches: FT-101, CS-102, IB-101N, IT-105A
+          let match = subjectText.match(/^(.*?)\s+([A-Z]{1,3}-?\d{3,4}[A-Z]*)\s+(.+)$/i);
           
           if (match) {
             programName = match[1].trim();
             subjectCode = match[2].trim();
             subjectName = match[3].trim();
           } else {
-            // Fallback: try to find any code pattern
-            const codeMatch = subjectText.match(/([A-Z]{1,3}-?\d{3,4}[A-Z]*)/i);
-            if (codeMatch) {
-              subjectCode = codeMatch[1];
-              const codeIndex = subjectText.indexOf(subjectCode);
-              programName = subjectText.substring(0, codeIndex).trim();
-              subjectName = subjectText.substring(codeIndex + subjectCode.length).trim();
+            // Try pattern 2: Codes that start with numbers
+            // Matches: 101A, 102C, 104A
+            match = subjectText.match(/^(.*?)\s+(\d{3,4}[A-Z]+)\s+(.+)$/i);
+            
+            if (match) {
+              programName = match[1].trim();
+              subjectCode = match[2].trim();
+              subjectName = match[3].trim();
             } else {
-              // If no code found, use the whole text
-              subjectCode = subjectText.substring(0, Math.min(20, subjectText.length));
-              subjectName = subjectText;
-              programName = '';
+              // Fallback: try to find any code pattern
+              const codeMatch = subjectText.match(/([A-Z]{1,3}-?\d{3,4}[A-Z]*|\d{3,4}[A-Z]+)/i);
+              if (codeMatch) {
+                subjectCode = codeMatch[1];
+                const codeIndex = subjectText.indexOf(subjectCode);
+                programName = subjectText.substring(0, codeIndex).trim();
+                subjectName = subjectText.substring(codeIndex + subjectCode.length).trim();
+              } else {
+                // If no code found, use the whole text
+                subjectCode = subjectText.substring(0, Math.min(20, subjectText.length));
+                subjectName = subjectText;
+                programName = '';
+              }
             }
           }
 
@@ -193,6 +210,7 @@ const ExcelUpload = ({ onDataParsed }) => {
             if (!existing.dates.includes(dateCell)) {
               existing.dates.push(dateCell);
             }
+            console.log(`  → Updated existing subject: ${subjectCode}`);
           } else {
             subjectsMap.set(subjectCode, {
               code: subjectCode,
@@ -200,6 +218,7 @@ const ExcelUpload = ({ onDataParsed }) => {
               program: programName,
               dates: [dateCell]
             });
+            console.log(`  → Added new subject: ${subjectCode} - ${subjectName}`);
           }
         }
       }
@@ -488,39 +507,231 @@ const ExcelUpload = ({ onDataParsed }) => {
     }
   };
 
+
+
+  // Detect unmatched subjects when timetable or seating plan changes
+  useEffect(() => {
+    if (!timetableData || !seatingPlanData) {
+      setUnmatchedSubjects([]);
+      return;
+    }
+
+    const programAliases = {
+      'FT': 'IM'  // Built-in default
+    };
+    
+    // Build mapping dictionaries for both exact codes and prefixes
+    const exactCodeMappings = {};
+    const prefixMappings = {};
+    
+    courseMappings.forEach(mapping => {
+      const timetableCode = mapping.timetableCode.toUpperCase();
+      const seatingCode = mapping.seatingCode.toUpperCase();
+      
+      if (/^[A-Z]{2,3}$/.test(timetableCode)) {
+        prefixMappings[timetableCode] = seatingCode;
+        programAliases[timetableCode] = seatingCode;
+      } else {
+        exactCodeMappings[timetableCode] = seatingCode;
+      }
+    });
+
+    const unmatched = [];
+    const seatingPlanKeys = Object.keys(seatingPlanData.subjectAllocations);
+
+    timetableData.subjects.forEach(subject => {
+      // Skip BREAK and SUNDAY entries
+      if (subject.code === 'BREAK' || subject.code === 'SUNDAY') {
+        return;
+      }
+
+      let found = false;
+      
+      // STEP 1: Check for exact code mapping first
+      if (exactCodeMappings[subject.code.toUpperCase()]) {
+        const targetCode = exactCodeMappings[subject.code.toUpperCase()];
+        for (const key of seatingPlanKeys) {
+          if (key.toUpperCase() === targetCode || key.toUpperCase().startsWith(targetCode)) {
+            found = true;
+            break;
+          }
+        }
+      }
+      
+      // STEP 2: If no exact match, try prefix matching
+      if (!found) {
+        let subjectPrefix = subject.code.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+        const originalPrefix = subjectPrefix;
+        
+        // Apply alias if exists
+        if (subjectPrefix && programAliases[subjectPrefix]) {
+          subjectPrefix = programAliases[subjectPrefix];
+        }
+
+        // Check if subject matches any seating plan key
+        for (const key of seatingPlanKeys) {
+          const keyPrefix = key.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+          
+          if (subjectPrefix && keyPrefix && subjectPrefix === keyPrefix) {
+            found = true;
+            break;
+          }
+          
+          if (key === subject.code || key.includes(subject.code) || subject.code.includes(key)) {
+            found = true;
+            break;
+          }
+        }
+      }
+
+      if (!found) {
+        const subjectPrefix = subject.code.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+        unmatched.push({
+          code: subject.code,
+          name: subject.name,
+          prefix: subjectPrefix || subject.code,
+          dates: subject.dates
+        });
+      }
+    });
+
+    setUnmatchedSubjects(unmatched);
+  }, [timetableData, seatingPlanData, courseMappings]);
+
+  const addMappingFromSuggestion = (timetableCode) => {
+    setNewTimetableCode(timetableCode);
+  };
+
   const mergeAndGenerate = (timetable, seatingPlan, invigilationData) => {
     try {
+      console.log('%c🔍 STARTING MERGE AND GENERATE', 'background: #222; color: #bada55; font-size: 16px; font-weight: bold;');
       console.log('Merging:', { timetable, seatingPlan });
+      console.log('📋 Course mappings provided:', courseMappings);
+
+      // Hard-coded APR mappings - automatically maps all APR subjects to AP-2K25
+      const hardCodedAPRMappings = [
+        { timetableCode: 'APR-111A', seatingCode: 'AP-2K25' },
+        { timetableCode: 'APR-101B', seatingCode: 'AP-2K25' },
+        { timetableCode: 'APR-112', seatingCode: 'AP-2K25' },
+        { timetableCode: 'APR-106B', seatingCode: 'AP-2K25' },
+        { timetableCode: 'APR-102', seatingCode: 'AP-2K25' },
+        { timetableCode: 'APR-110', seatingCode: 'AP-2K25' },
+        { timetableCode: 'APR-113', seatingCode: 'AP-2K25' }
+      ];
+      
+      // Combine hard-coded mappings with user-provided mappings
+      const allMappings = [...hardCodedAPRMappings, ...courseMappings];
+      console.log('📋 Total mappings (hard-coded + manual):', allMappings.length);
+
+      // Program alias mapping: User-defined only
+      const programAliases = {};
+      
+      // Build mapping dictionaries for both exact codes and prefixes
+      const exactCodeMappings = {};  // For specific course codes like "APR-111A" → "AP-2K25"
+      const prefixMappings = {};     // For prefix mappings like "APR" → "AP"
+      
+      console.log('📝 Processing', allMappings.length, 'course mappings...');
+      allMappings.forEach(mapping => {
+        const timetableCode = mapping.timetableCode.toUpperCase();
+        const seatingCode = mapping.seatingCode.toUpperCase();
+        
+        // Check if it's a prefix mapping (2-3 letters) or a full code
+        if (/^[A-Z]{2,3}$/.test(timetableCode)) {
+          // It's a prefix mapping like "APR" → "AP"
+          prefixMappings[timetableCode] = seatingCode;
+          programAliases[timetableCode] = seatingCode;
+        } else {
+          // It's a specific course code mapping like "APR-111A" → "AP-2K25"
+          exactCodeMappings[timetableCode] = seatingCode;
+        }
+      });
+
+      console.log('%c✅ EXACT CODE MAPPINGS (Full codes like APR-111A → AP-2K25):', 'color: #4CAF50; font-weight: bold; font-size: 14px;', exactCodeMappings);
+      console.log('%c✅ PREFIX MAPPINGS (Prefixes like APR → AP):', 'color: #2196F3; font-weight: bold; font-size: 14px;', prefixMappings);
+
+      // Hard-code AP-2K25 room allocations (43 students total)
+      // AP-2K25-1 to AP-2K25-24 (24 students) → Room 107
+      // AP-2K25-25 to AP-2K25-43 (19 students) → Room 106
+      if (!seatingPlan.subjectAllocations['AP-2K25']) {
+        seatingPlan.subjectAllocations['AP-2K25'] = {};
+      }
+      if (!seatingPlan.subjectAllocations['AP-2K25']['default']) {
+        seatingPlan.subjectAllocations['AP-2K25']['default'] = {};
+      }
+      seatingPlan.subjectAllocations['AP-2K25']['default']['107'] = '24';
+      seatingPlan.subjectAllocations['AP-2K25']['default']['106'] = '19';
+      console.log('%c🔧 HARD-CODED AP-2K25 SEATING PLAN:', 'color: #9C27B0; font-weight: bold;', seatingPlan.subjectAllocations['AP-2K25']);
 
       // First, group all rooms by date with their total student counts
       const dateRoomMap = {}; // { date: { roomNumber: totalStudents } }
 
       // Collect all subjects and their rooms per date
+      const seatingPlanKeys = Object.keys(seatingPlan.subjectAllocations);
+      console.log('%c📚 AVAILABLE SEATING PLAN KEYS:', 'color: #FF9800; font-weight: bold; font-size: 14px;', seatingPlanKeys);
+      
       timetable.subjects.forEach(subject => {
         let matchingKey = null;
-        // Extract prefix (first 2-3 letters) for matching
-        const subjectPrefix = subject.code.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
         
-        console.log(`Looking for match for subject: ${subject.code} (prefix: ${subjectPrefix})`);
+        // STEP 1: Check for exact code mapping first (e.g., "APR-111A" → "AP-2K25")
+        const upperSubjectCode = subject.code.toUpperCase();
+        console.log(`\n%c🔎 CHECKING SUBJECT: ${subject.code} (${subject.name})`, 'background: #333; color: #fff; padding: 2px 5px;');
         
-        // Look for matching allocation in seating plan
-        for (const key of Object.keys(seatingPlan.subjectAllocations)) {
-          const keyPrefix = key.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+        if (exactCodeMappings[upperSubjectCode]) {
+          const targetCode = exactCodeMappings[upperSubjectCode];
+          console.log(`  ➡️  Has exact mapping: ${subject.code} → ${targetCode}`);
+          console.log(`  🔍 Searching in seating plan keys:`, seatingPlanKeys);
           
-          console.log(`  Checking seating plan key: ${key} (prefix: ${keyPrefix})`);
-          
-          // Match by prefix (e.g., "FT" matches "FT")
-          if (subjectPrefix && keyPrefix && subjectPrefix === keyPrefix) {
-            matchingKey = key;
-            console.log(`  ✓ MATCHED by prefix: ${subject.code} → ${key}`);
-            break;
+          // Find the seating plan key that matches the target code
+          for (const key of seatingPlanKeys) {
+            const upperKey = key.toUpperCase();
+            console.log(`    Comparing "${upperKey}" with target "${targetCode}"`);
+            if (upperKey === targetCode || upperKey.startsWith(targetCode + '-') || upperKey.startsWith(targetCode)) {
+              matchingKey = key;
+              console.log(`  ✅ MATCHED by exact mapping: ${subject.code} → ${key}`);
+              break;
+            }
           }
           
-          // Fallback: exact match or contains
-          if (key === subject.code || key.includes(subject.code) || subject.code.includes(key)) {
-            matchingKey = key;
-            console.log(`  ✓ MATCHED by exact/contains: ${subject.code} → ${key}`);
-            break;
+          if (!matchingKey) {
+            console.log(`  ❌ NO MATCH FOUND for exact mapping ${subject.code} → ${targetCode}`);
+          }
+        } else {
+          console.log(`  No exact mapping found for ${upperSubjectCode}`);
+        }
+        
+        // STEP 2: If no exact match, try prefix matching
+        if (!matchingKey) {
+          // Extract prefix (first 2-3 letters) for matching
+          let subjectPrefix = subject.code.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+          
+          // Apply alias if exists (e.g., FT → IM)
+          const originalPrefix = subjectPrefix;
+          if (subjectPrefix && programAliases[subjectPrefix]) {
+            subjectPrefix = programAliases[subjectPrefix];
+            console.log(`Looking for match for subject: ${subject.code} (prefix: ${originalPrefix} → ${subjectPrefix} via alias)`);
+          } else {
+            console.log(`Looking for match for subject: ${subject.code} (prefix: ${subjectPrefix})`);
+          }
+          
+          // Look for matching allocation in seating plan
+          for (const key of Object.keys(seatingPlan.subjectAllocations)) {
+            const keyPrefix = key.match(/^([A-Z]{2,3})/i)?.[1]?.toUpperCase();
+            
+            console.log(`  Checking seating plan key: ${key} (prefix: ${keyPrefix})`);
+            
+            // Match by prefix (e.g., "FT" matches "IM" via alias)
+            if (subjectPrefix && keyPrefix && subjectPrefix === keyPrefix) {
+              matchingKey = key;
+              console.log(`  ✓ MATCHED by prefix: ${subject.code} → ${key}`);
+              break;
+            }
+            
+            // Fallback: exact match or contains
+            if (key === subject.code || key.includes(subject.code) || subject.code.includes(key)) {
+              matchingKey = key;
+              console.log(`  ✓ MATCHED by exact/contains: ${subject.code} → ${key}`);
+              break;
+            }
           }
         }
 
@@ -634,6 +845,8 @@ const ExcelUpload = ({ onDataParsed }) => {
             totalNeeded = 3;
           }
           
+          console.log(`Room ${roomNumber} (${totalStudents} students): Needs ${totalNeeded} faculties (currently has ${currentFaculties})`)
+          
           // Additional needed = total needed - already assigned
           additionalNeeded = totalNeeded - currentFaculties;
           
@@ -700,6 +913,16 @@ const ExcelUpload = ({ onDataParsed }) => {
           const rooms = Object.keys(roomData).map(roomNumber => {
             const studentCount = parseInt(roomData[roomNumber]) || 0;
             
+            // Get the aggregated student count from dateRoomMap (used for faculty calculation)
+            const aggregatedStudentCount = dateRoomMap[date] && dateRoomMap[date][roomNumber] 
+              ? dateRoomMap[date][roomNumber] 
+              : studentCount;
+            
+            // Debug: Log what aggregated count we're setting
+            if (roomNumber === 'LT-2' || roomNumber === 'LH-3') {
+              console.log(`Creating room object: Subject ${subject.code}, Date ${date}, Room ${roomNumber}, studentCount=${studentCount}, aggregatedStudentCount=${aggregatedStudentCount}`);
+            }
+            
             // Get the pre-assigned faculties for this room on this date
             // Create a copy to avoid shared references across subjects
             const faculties = roomFacultyAssignments[date] && roomFacultyAssignments[date][roomNumber] 
@@ -713,6 +936,7 @@ const ExcelUpload = ({ onDataParsed }) => {
             return {
               number: roomNumber,
               studentCount: studentCount,
+              aggregatedStudentCount: aggregatedStudentCount, // The total used for faculty calculation
               faculties: faculties
             };
           });
@@ -1041,6 +1265,52 @@ const ExcelUpload = ({ onDataParsed }) => {
           </div>
         )}
       </div>
+
+      {/* Course Code Mapping Section */}
+      {timetableFile && seatingPlanFile && (
+        <div className="upload-area mapping-section">
+          <h3 className="upload-title">🔗 Course Code Mapping</h3>
+          <p className="upload-subtitle">
+            Map timetable subject codes to seating plan identifiers when they differ
+          </p>
+          
+          {/* Unmatched Subjects Warning */}
+          {unmatchedSubjects.length > 0 && (
+            <div className="unmatched-warning">
+              <div className="warning-header">
+                <span className="warning-icon">⚠️</span>
+                <strong>Found {unmatchedSubjects.length} subject(s) without seating plan:</strong>
+              </div>
+              <div className="unmatched-list">
+                {unmatchedSubjects.map((subject, index) => (
+                  <div key={index} className="unmatched-item">
+                    <div className="unmatched-info">
+                      <span className="unmatched-code">{subject.code}</span>
+                      <span className="unmatched-name">{subject.name}</span>
+                      <span className="unmatched-dates">
+                        📅 {subject.dates.join(', ')}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => addMappingFromSuggestion(subject.code)}
+                      className="btn-quick-add"
+                      title="Add mapping for this subject"
+                    >
+                      ➕ Add Mapping
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {unmatchedSubjects.length === 0 && timetableData && seatingPlanData && (
+            <div className="all-matched-message">
+              ✅ <strong>All subjects matched!</strong> All timetable subjects have corresponding seating plans.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Inhouse Faculty Count Input */}
       {invigilationFile && (
